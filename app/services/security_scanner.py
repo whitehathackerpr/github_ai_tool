@@ -222,5 +222,111 @@ class SecurityScanner:
             )
             
             # Parse the output
-            vulnerabilities
+            vulnerabilities = []
+            high_severity_count = 0
+            medium_severity_count = 0
+            low_severity_count = 0
+            
+            try:
+                if result.stdout.strip():
+                    bandit_result = json.loads(result.stdout)
+                    for issue in bandit_result.get('results', []):
+                        severity = issue.get('issue_severity', 'LOW')
+                        if severity == 'HIGH':
+                            high_severity_count += 1
+                        elif severity == 'MEDIUM':
+                            medium_severity_count += 1
+                        else:
+                            low_severity_count += 1
+                        
+                        vulnerabilities.append({
+                            'line': issue.get('line_number', 0),
+                            'severity': severity,
+                            'confidence': issue.get('issue_confidence', 'LOW'),
+                            'message': issue.get('issue_text', ''),
+                            'code': issue.get('code', '')
+                        })
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse Bandit JSON output")
+            
+            return {
+                'vulnerabilities': vulnerabilities,
+                'vulnerability_count': len(vulnerabilities),
+                'high_severity_count': high_severity_count,
+                'medium_severity_count': medium_severity_count,
+                'low_severity_count': low_severity_count
+            }
+        except Exception as e:
+            logger.error(f"Failed to run bandit: {str(e)}")
+            return {'error': str(e)}
+    
+    async def _run_npm_audit(self, directory: str) -> Dict[str, Any]:
+        """Run npm audit on a JavaScript project directory."""
+        try:
+            # Check if npm is installed
+            result = subprocess.run(['which', 'npm'], capture_output=True, text=True)
+            if result.returncode != 0:
+                return {'error': 'npm not installed'}
+            
+            # Run npm audit
+            result = subprocess.run(
+                ['npm', 'audit', '--json'], 
+                cwd=directory,
+                capture_output=True, 
+                text=True
+            )
+            
+            # Parse the output
+            vulnerabilities = []
+            high_severity_count = 0
+            medium_severity_count = 0
+            low_severity_count = 0
+            
+            try:
+                if result.stdout.strip():
+                    audit_result = json.loads(result.stdout)
+                    
+                    # Extract vulnerabilities from npm audit output
+                    for vuln_id, vuln_data in audit_result.get('vulnerabilities', {}).items():
+                        severity = vuln_data.get('severity', 'low').upper()
+                        if severity == 'HIGH' or severity == 'CRITICAL':
+                            high_severity_count += 1
+                        elif severity == 'MEDIUM':
+                            medium_severity_count += 1
+                        else:
+                            low_severity_count += 1
+                        
+                        vulnerabilities.append({
+                            'id': vuln_id,
+                            'severity': severity,
+                            'package': vuln_data.get('name', ''),
+                            'path': vuln_data.get('path', ''),
+                            'message': vuln_data.get('title', ''),
+                            'overview': vuln_data.get('overview', ''),
+                            'recommendation': vuln_data.get('recommendation', ''),
+                        })
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse npm audit JSON output")
+                # Handle case where npm audit doesn't produce JSON
+                if "found 0 vulnerabilities" in result.stderr:
+                    return {
+                        'vulnerabilities': [],
+                        'vulnerability_count': 0,
+                        'high_severity_count': 0,
+                        'medium_severity_count': 0,
+                        'low_severity_count': 0
+                    }
+            
+            return {
+                'vulnerabilities': vulnerabilities,
+                'vulnerability_count': len(vulnerabilities),
+                'high_severity_count': high_severity_count,
+                'medium_severity_count': medium_severity_count,
+                'low_severity_count': low_severity_count
+            }
+        except Exception as e:
+            logger.error(f"Failed to run npm audit: {str(e)}")
+            return {'error': str(e)}
+    
+    async def _find_files(self
 
