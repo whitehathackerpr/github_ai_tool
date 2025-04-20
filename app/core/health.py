@@ -1,3 +1,174 @@
+import os
+import psutil
+import redis
+import httpx
+from typing import Dict, Any
+
+from app.config import settings
+
+async def check_redis_connection() -> Dict[str, Any]:
+    """Check Redis connection health."""
+    try:
+        # Create Redis connection
+        redis_client = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD,
+            ssl=settings.REDIS_SSL,
+            db=settings.REDIS_DB,
+            socket_timeout=5.0,
+            socket_connect_timeout=5.0
+        )
+        
+        # Ping Redis to check connection
+        response = redis_client.ping()
+        redis_client.close()
+        
+        if response:
+            return {
+                "status": "healthy",
+                "message": "Redis connection is healthy",
+                "details": {
+                    "host": settings.REDIS_HOST,
+                    "port": settings.REDIS_PORT,
+                    "ssl": settings.REDIS_SSL
+                }
+            }
+        else:
+            return {
+                "status": "unhealthy",
+                "message": "Redis ping failed",
+                "details": {
+                    "host": settings.REDIS_HOST,
+                    "port": settings.REDIS_PORT,
+                    "ssl": settings.REDIS_SSL
+                }
+            }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"Redis connection failed: {str(e)}",
+            "details": {
+                "host": settings.REDIS_HOST,
+                "port": settings.REDIS_PORT,
+                "ssl": settings.REDIS_SSL,
+                "error": str(e)
+            }
+        }
+
+async def check_github_api() -> Dict[str, Any]:
+    """Check GitHub API health."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.github.com/zen",
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                return {
+                    "status": "healthy",
+                    "message": "GitHub API is accessible",
+                    "details": {
+                        "status_code": response.status_code,
+                        "response_time": response.elapsed.total_seconds()
+                    }
+                }
+            return {
+                "status": "unhealthy",
+                "message": f"GitHub API returned status {response.status_code}",
+                "details": {
+                    "status_code": response.status_code,
+                    "response_time": response.elapsed.total_seconds()
+                }
+            }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"GitHub API check failed: {str(e)}",
+            "details": {
+                "error": str(e)
+            }
+        }
+
+async def check_openai_api() -> Dict[str, Any]:
+    """Check OpenAI API health."""
+    if not settings.OPENAI_API_KEY:
+        return {
+            "status": "unconfigured",
+            "message": "OpenAI API key not configured"
+        }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                return {
+                    "status": "healthy",
+                    "message": "OpenAI API is accessible",
+                    "details": {
+                        "status_code": response.status_code,
+                        "response_time": response.elapsed.total_seconds()
+                    }
+                }
+            return {
+                "status": "unhealthy",
+                "message": f"OpenAI API returned status {response.status_code}",
+                "details": {
+                    "status_code": response.status_code,
+                    "response_time": response.elapsed.total_seconds()
+                }
+            }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"OpenAI API check failed: {str(e)}",
+            "details": {
+                "error": str(e)
+            }
+        }
+
+def check_disk_space(path: str = "/") -> Dict[str, Any]:
+    """Check disk space health."""
+    try:
+        disk_usage = psutil.disk_usage(path)
+        # Warning threshold at 90% usage
+        if disk_usage.percent >= 90:
+            return {
+                "status": "warning",
+                "message": f"Disk usage is high ({disk_usage.percent}%)",
+                "details": {
+                    "total": disk_usage.total,
+                    "used": disk_usage.used,
+                    "free": disk_usage.free,
+                    "percent": disk_usage.percent,
+                    "path": path
+                }
+            }
+        return {
+            "status": "healthy",
+            "message": f"Disk space is adequate ({disk_usage.percent}% used)",
+            "details": {
+                "total": disk_usage.total,
+                "used": disk_usage.used,
+                "free": disk_usage.free,
+                "percent": disk_usage.percent,
+                "path": path
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"Disk space check failed: {str(e)}",
+            "details": {
+                "error": str(e),
+                "path": path
+            }
+        }
+
 import logging
 from typing import Dict, Any, List
 import httpx

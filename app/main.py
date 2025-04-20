@@ -171,6 +171,9 @@ class CacheMiddleware(BaseHTTPMiddleware):
 if redis_instance:
     app.add_middleware(CacheMiddleware)
 
+# Include health router
+app.include_router(health.router, prefix="")
+
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
