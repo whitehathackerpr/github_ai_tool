@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from . import health, auth
+from . import health, auth, analysis
 
 # Create API router
 api_router = APIRouter()
@@ -16,6 +16,13 @@ api_router.include_router(
     auth.router,
     prefix="/auth", 
     tags=["Authentication"]
+)
+
+# Include analysis routes
+api_router.include_router(
+    analysis.router,
+    prefix="/analysis",
+    tags=["Analysis"]
 )
 
 # Additional routers will be included as they are implemented
