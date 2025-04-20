@@ -8,8 +8,9 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 import json
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request, BackgroundTasks
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
+import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import httpx
@@ -67,7 +68,13 @@ app = FastAPI(
     title=settings.APP_NAME,
     description=settings.APP_DESCRIPTION,
     version=settings.APP_VERSION,
-    docs_url="/docs",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
+
+# Configure logger
+logger = logging.getLogger(__name__)
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
@@ -88,14 +95,31 @@ template_generator = TemplateGenerator()
 # Middleware
 #----------------------------------------
 
-# Add CORS middleware
+# Import custom middleware
+from app.middleware.auth import JWTAuthMiddleware, RateLimitByUserMiddleware
+from app.middleware.security import SecurityHeadersMiddleware, RequestLoggingMiddleware, get_cors_middleware
+
+# Add middleware in reverse order (last added = first executed)
+
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
+
+# Configure CORS
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    get_cors_middleware(
+        allowed_origins=getattr(settings, 'ALLOWED_ORIGINS', None)
+    )
 )
+
+# Add rate limiting middleware if Redis is configured
+if redis_instance:
+    app.add_middleware(RateLimitByUserMiddleware, redis_client=redis_instance)
+
+# Add authentication middleware
+app.add_middleware(JWTAuthMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 
 # Cache middleware
