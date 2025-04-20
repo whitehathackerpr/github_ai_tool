@@ -1,4 +1,275 @@
 import os
+import shutil
+import tempfile
+import logging
+from typing import Dict, Any, Optional, List
+import asyncio
+import git
+from datetime import datetime
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+class RepositoryAnalyzer:
+    """Service for analyzing GitHub repositories."""
+    
+    def __init__(self):
+        """Initialize the repository analyzer."""
+        self.temp_dir = settings.TEMP_DIR
+        os.makedirs(self.temp_dir, exist_ok=True)
+    
+    async def clone_repository(
+        self,
+        repo_url: str,
+        branch: Optional[str] = None
+    ) -> str:
+        """
+        Clone a GitHub repository to a temporary directory.
+        
+        Args:
+            repo_url: URL of the repository to clone
+            branch: Optional branch name to checkout
+            
+        Returns:
+            str: Path to the cloned repository
+        """
+        repo_dir = None
+        try:
+            # Create temporary directory
+            repo_dir = tempfile.mkdtemp(dir=self.temp_dir)
+            logger.info(f"Cloning repository {repo_url} to {repo_dir}")
+            
+            # Use a subprocess with asyncio to clone the repository asynchronously
+            # This avoids blocking the event loop with potentially slow git operations
+            clone_cmd = ["git", "clone"]
+            if branch:
+                clone_cmd.extend(["--branch", branch])
+            clone_cmd.extend([repo_url, repo_dir])
+            
+            # Run the clone operation
+            process = await asyncio.create_subprocess_exec(
+                *clone_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                error_msg = stderr.decode().strip()
+                logger.error(f"Git clone failed: {error_msg}")
+                raise ValueError(f"Failed to clone repository: {error_msg}")
+            
+            logger.info(f"Successfully cloned repository: {repo_url}")
+            return repo_dir
+            
+        except Exception as e:
+            logger.error(f"Failed to clone repository {repo_url}: {str(e)}")
+            # Clean up if clone failed
+            if repo_dir and os.path.exists(repo_dir):
+                shutil.rmtree(repo_dir, ignore_errors=True)
+            raise ValueError(f"Repository cloning failed: {str(e)}")
+    
+    async def cleanup_repository(self, repo_path: str) -> None:
+        """
+        Clean up a cloned repository.
+        
+        Args:
+            repo_path: Path to the repository to clean up
+        """
+        try:
+            if os.path.exists(repo_path):
+                shutil.rmtree(repo_path, ignore_errors=True)
+                logger.info(f"Cleaned up repository: {repo_path}")
+        except Exception as e:
+            logger.error(f"Failed to clean up repository {repo_path}: {str(e)}")
+    
+    async def get_repository_info(self, repo_path: str) -> Dict[str, Any]:
+        """
+        Get basic information about a repository.
+        
+        Args:
+            repo_path: Path to the repository
+            
+        Returns:
+            Dict[str, Any]: Repository information
+        """
+        try:
+            repo = git.Repo(repo_path)
+            
+            # Get commit information
+            latest_commit = repo.head.commit
+            
+            # Get basic statistics
+            stats = {
+                "total_files": sum(1 for _ in repo.tree().traverse()),
+                "branches": len(repo.refs),
+                "active_branch": repo.active_branch.name,
+                "total_commits": sum(1 for _ in repo.iter_commits()),
+            }
+            
+            # Get language statistics
+            languages = await self._get_language_stats(repo_path)
+            
+            return {
+                "repository_info": {
+                    "latest_commit": {
+                        "hash": str(latest_commit),
+                        "author": str(latest_commit.author),
+                        "date": latest_commit.committed_datetime.isoformat(),
+                        "message": latest_commit.message.strip()
+                    },
+                    "statistics": stats,
+                    "languages": languages
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get repository info: {str(e)}")
+            raise
+    
+    async def _get_language_stats(self, repo_path: str) -> Dict[str, int]:
+        """
+        Get language statistics for a repository.
+        
+        Args:
+            repo_path: Path to the repository
+            
+        Returns:
+            Dict[str, int]: Language statistics (bytes per language)
+        """
+        try:
+            # File extension to language mapping
+            extension_map = {
+                '.py': 'Python',
+                '.js': 'JavaScript',
+                '.ts': 'TypeScript',
+                '.java': 'Java',
+                '.cpp': 'C++',
+                '.c': 'C',
+                '.go': 'Go',
+                '.rs': 'Rust',
+                '.rb': 'Ruby',
+                '.php': 'PHP',
+                '.html': 'HTML',
+                '.css': 'CSS',
+                '.md': 'Markdown'
+            }
+            
+            language_stats = {}
+            
+            for root, _, files in os.walk(repo_path):
+                if '.git' in root:
+                    continue
+                    
+                for file in files:
+                    ext = os.path.splitext(file)[1].lower()
+                    if ext in extension_map:
+                        lang = extension_map[ext]
+                        file_path = os.path.join(root, file)
+                        try:
+                            size = os.path.getsize(file_path)
+                            language_stats[lang] = language_stats.get(lang, 0) + size
+                        except OSError:
+                            continue
+            
+            return language_stats
+            
+        except Exception as e:
+            logger.error(f"Failed to get language statistics: {str(e)}")
+            return {}
+    
+    async def generate_analysis_summary(
+        self,
+        quality_results: Dict[str, Any],
+        security_results: Optional[Dict[str, Any]] = None,
+        dependency_results: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a summary of all analysis results.
+        
+        Args:
+            quality_results: Results from code quality analysis
+            security_results: Optional results from security scan
+            dependency_results: Optional results from dependency analysis
+            
+        Returns:
+            Dict[str, Any]: Summary of analysis results
+        """
+        try:
+            summary = {
+                "quality_summary": {
+                    "total_issues": len(quality_results.get("issues", [])),
+                    "critical_issues": sum(1 for issue in quality_results.get("issues", [])
+                                        if issue.get("severity") == "critical"),
+                    "major_issues": sum(1 for issue in quality_results.get("issues", [])
+                                    if issue.get("severity") == "major"),
+                    "minor_issues": sum(1 for issue in quality_results.get("issues", [])
+                                    if issue.get("severity") == "minor")
+                }
+            }
+            
+            if security_results:
+                summary["security_summary"] = {
+                    "total_vulnerabilities": security_results.get("vulnerability_count", 0),
+                    "high_severity": security_results.get("high_severity_count", 0),
+                    "medium_severity": security_results.get("medium_severity_count", 0),
+                    "low_severity": security_results.get("low_severity_count", 0)
+                }
+            
+            if dependency_results:
+                summary["dependency_summary"] = {
+                    "total_dependencies": dependency_results.get("total_dependencies", 0),
+                    "outdated_dependencies": dependency_results.get("outdated_count", 0),
+                    "vulnerable_dependencies": dependency_results.get("vulnerable_count", 0)
+                }
+            
+            # Generate risk score based on issues and vulnerabilities
+            # Higher score means higher risk (0-100 scale)
+            risk_score = 0
+            
+            # Calculate quality risk (0-40 points)
+            total_issues = summary["quality_summary"]["total_issues"]
+            critical_issues = summary["quality_summary"]["critical_issues"]
+            major_issues = summary["quality_summary"]["major_issues"]
+            
+            # Weight issues by severity
+            quality_score = min(40, (critical_issues * 5 + major_issues * 2 + total_issues * 0.5))
+            risk_score += quality_score
+            
+            # Calculate security risk (0-60 points)
+            if "security_summary" in summary:
+                high_vulns = summary["security_summary"]["high_severity"]
+                medium_vulns = summary["security_summary"]["medium_severity"]
+                total_vulns = summary["security_summary"]["total_vulnerabilities"]
+                
+                # Weight vulnerabilities by severity
+                security_score = min(60, (high_vulns * 10 + medium_vulns * 3 + total_vulns))
+                risk_score += security_score
+            
+            # Add overall summary
+            summary["overall_summary"] = {
+                "risk_score": round(risk_score, 1),
+                "risk_level": "High" if risk_score > 70 else "Medium" if risk_score > 30 else "Low",
+                "timestamp": datetime.utcnow().isoformat(),
+                "total_issues_and_vulnerabilities": (
+                    total_issues + 
+                    (summary.get("security_summary", {}).get("total_vulnerabilities", 0))
+                )
+            }
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Failed to generate analysis summary: {str(e)}")
+            return {
+                "error": "Failed to generate summary",
+                "message": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+import os
 import logging
 from typing import Dict, Any, List, Tuple
 from git import Repo
