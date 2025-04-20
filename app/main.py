@@ -8,9 +8,11 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 import json
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import logging
+import redis.asyncio as redis
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import httpx
@@ -114,12 +116,37 @@ app.add_middleware(
     )
 )
 
-# Add rate limiting middleware if Redis is configured
-if redis_instance:
-    app.add_middleware(RateLimitByUserMiddleware, redis_client=redis_instance)
+# Setup Redis connection and rate limiting at startup
+@app.on_event("startup")
+async def startup_event():
+    try:
+        # Initialize Redis connection
+        redis_client = await redis.from_url(
+            f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}",
+            password=settings.REDIS_PASSWORD,
+            ssl=settings.REDIS_SSL,
+            db=settings.REDIS_DB,
+            encoding="utf-8",
+            decode_responses=True
+        )
+        
+        # Store Redis client in app state
+        app.state.redis = redis_client
+        
+        # Add rate limiting middleware with Redis client
+        app.add_middleware(RateLimitMiddleware, redis_instance=redis_client)
+        
+        logger.info("Redis connection established")
+    except Exception as e:
+        logger.warning(f"Failed to connect to Redis: {str(e)}")
+        logger.warning("Rate limiting will be disabled")
 
-# Add authentication middleware
-app.add_middleware(JWTAuthMiddleware)
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Close Redis connection
+    if hasattr(app.state, "redis"):
+        await app.state.redis.close()
+        logger.info("Redis connection closed")
 app.add_middleware(SlowAPIMiddleware)
 
 # Cache middleware
@@ -171,8 +198,21 @@ class CacheMiddleware(BaseHTTPMiddleware):
 if redis_instance:
     app.add_middleware(CacheMiddleware)
 
-# Include health router
+# Include routers
 app.include_router(health.router, prefix="")
+app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
+al_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "type": "server_error"
+        }
+    )
+
+# Include routers
+from app.routers import health, auth
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -562,10 +602,15 @@ template_generator = TemplateGenerator()
 
 # Add CORS middleware
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
+    get_cors_middleware(
+        allowed_origins=settings.CORS_ORIGINS
+    )
+)
+
+# Add middleware for security and authentication
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(AuthMiddleware)
     allow_headers=["*"],
 )
 app.add_middleware(SlowAPIMiddleware)

@@ -1,3 +1,153 @@
+from fastapi import APIRouter, Response, status, Request
+from typing import Dict, Any
+import logging
+from datetime import datetime
+import psutil
+import httpx
+
+from app.core.models import HealthResponse, ComponentHealth
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+async def check_redis_health(request: Request) -> ComponentHealth:
+    """
+    Check Redis connection health.
+    
+    Args:
+        request: FastAPI request object with app state
+        
+    Returns:
+        ComponentHealth object with Redis status
+    """
+    try:
+        if hasattr(request.app.state, "redis"):
+            redis_client = request.app.state.redis
+            await redis_client.ping()
+            return ComponentHealth(
+                status="healthy",
+                message="Redis connection is healthy",
+                details={
+                    "host": settings.REDIS_HOST,
+                    "port": settings.REDIS_PORT
+                }
+            )
+        return ComponentHealth(
+            status="unknown",
+            message="Redis not configured"
+        )
+    except Exception as e:
+        logger.error(f"Redis health check failed: {str(e)}")
+        return ComponentHealth(
+            status="unhealthy",
+            message=f"Redis connection failed: {str(e)}",
+            details={
+                "error": str(e)
+            }
+        )
+
+async def check_github_api() -> ComponentHealth:
+    """
+    Check GitHub API health.
+    
+    Returns:
+        ComponentHealth object with GitHub API status
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.github.com/zen",
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                return ComponentHealth(
+                    status="healthy",
+                    message="GitHub API is accessible",
+                    details={
+                        "status_code": response.status_code,
+                        "response_time": f"{response.elapsed.total_seconds():.3f}s"
+                    }
+                )
+            return ComponentHealth(
+                status="unhealthy",
+                message=f"GitHub API returned status {response.status_code}",
+                details={
+                    "status_code": response.status_code,
+                    "response_time": f"{response.elapsed.total_seconds():.3f}s"
+                }
+            )
+    except Exception as e:
+        logger.error(f"GitHub API health check failed: {str(e)}")
+        return ComponentHealth(
+            status="unhealthy",
+            message=f"GitHub API check failed: {str(e)}",
+            details={
+                "error": str(e)
+            }
+        )
+
+def get_system_metrics() -> Dict[str, float]:
+    """
+    Get system resource metrics.
+    
+    Returns:
+        Dictionary of system metrics (CPU, memory, disk usage)
+    """
+    try:
+        return {
+            "cpu_usage": psutil.cpu_percent(interval=0.1),
+            "memory_usage": psutil.virtual_memory().percent,
+            "disk_usage": psutil.disk_usage('/').percent,
+            "load_avg": psutil.getloadavg()[0]  # 1-minute load average
+        }
+    except Exception as e:
+        logger.error(f"Error getting system metrics: {str(e)}")
+        return {
+            "cpu_usage": 0.0,
+            "memory_usage": 0.0,
+            "disk_usage": 0.0
+        }
+
+@router.get("/", response_model=HealthResponse)
+async def health_check(request: Request, response: Response) -> Dict[str, Any]:
+    """
+    Check the overall health status of all system components.
+    
+    This endpoint performs health checks on all critical components
+    and returns a comprehensive health status report.
+    """
+    # Check individual components
+    redis_health = await check_redis_health(request)
+    github_health = await check_github_api()
+    
+    # Get system metrics
+    system_metrics = get_system_metrics()
+    
+    # Determine overall status
+    services = {
+        "redis": redis_health,
+        "github_api": github_health
+    }
+    
+    # Critical services that must be healthy
+    critical_services = ["redis"]
+    critical_healthy = all(
+        services[name].status == "healthy" 
+        for name in critical_services
+        if name in services
+    )
+    
+    # Determine overall status
+    if all(service.status == "healthy" for service in services.values()):
+        overall_status = "healthy"
+    elif any(service.status == "unhealthy" for service in services.values()):
+        overall_status = "unhealthy" if not critical_healthy else "degraded"
+    else:
+        overall_status = "degraded"
+    
+    health
+
 from fastapi import APIRouter, Response, status
 from typing import Dict, Any
 import psutil
