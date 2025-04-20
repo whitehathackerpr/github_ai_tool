@@ -27,7 +27,7 @@ The easiest way to get started is to use the provided setup script:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/github_ai_tool.git
+git clone https://github.com/whitehathackerpr/github_ai_tool.git
 cd github_ai_tool
 
 # Run the setup script
@@ -37,6 +37,25 @@ chmod +x setup.sh
 # Start the application
 source venv/bin/activate  # If not already activated
 python -m app.main
+```
+
+### Using Docker
+
+You can also use Docker to run the application without installing dependencies locally:
+
+```bash
+# Clone the repository
+git clone https://github.com/whitehathackerpr/github_ai_tool.git
+cd github_ai_tool
+
+# Copy the example environment file and edit it
+cp .env.example .env
+# Edit the .env file with your settings
+
+# Build and start the development environment
+docker-compose up --build
+
+# Access the application at http://localhost:8000
 ```
 
 ## Manual Installation
@@ -168,6 +187,71 @@ pip install -r requirements.txt
 which flake8 bandit  # Should return paths
 which eslint  # Should return path
 ```
+
+## Docker Support
+
+### Development Environment
+
+To run the application in development mode:
+
+```bash
+# Build and start the development environment
+docker-compose up --build
+
+# Run tests
+docker-compose run tests
+```
+
+### Production Environment
+
+To run the application in production mode:
+
+```bash
+# Build and start the production environment
+docker-compose -f docker-compose.prod.yml up --build -d
+
+# Scale the web service (optional)
+docker-compose -f docker-compose.prod.yml up --scale web=3
+
+# View logs
+docker-compose -f docker-compose.prod.yml logs -f
+```
+
+### Docker Commands
+
+Common Docker commands:
+
+```bash
+# Stop all containers
+docker-compose down
+
+# View container logs
+docker-compose logs -f [service_name]
+
+# Execute commands in a container
+docker-compose exec web python -m pytest
+
+# Remove all containers and volumes
+docker-compose down -v
+```
+
+### Docker Troubleshooting
+
+Common issues and solutions:
+
+1. **Redis Connection Issues**
+   - Check if Redis container is running: `docker-compose ps`
+   - Verify Redis logs: `docker-compose logs redis`
+   - Ensure REDIS_PASSWORD matches in .env and docker-compose files
+
+2. **Permission Issues**
+   - All containers run as non-root users for security in production
+   - Volume permissions might need adjustment on the host
+
+3. **Performance Issues**
+   - Check container resources: `docker stats`
+   - Adjust worker count in production compose file
+   - Monitor Redis memory usage
 
 ## License
 

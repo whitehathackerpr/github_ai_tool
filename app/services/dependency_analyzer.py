@@ -32,6 +32,42 @@ class DependencyAnalyzer:
                     continue
                 
                 # Extract package name and version
+                match = re.match(r'^
+
+import os
+import logging
+import json
+import re
+import subprocess
+import tempfile
+from typing import Dict, Any, List, Optional, Tuple
+import requests
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class DependencyAnalyzer:
+    """Analyzes project dependencies and suggests updates."""
+    
+    def __init__(self):
+        """Initialize dependency analyzer."""
+        self.pypi_url = "https://pypi.org/pypi/{package}/json"
+        self.npm_url = "https://registry.npmjs.org/{package}"
+    
+    async def analyze_python_dependencies(self, requirements_content: str) -> Dict[str, Any]:
+        """Analyze Python dependencies in a requirements.txt file."""
+        try:
+            dependencies = []
+            outdated = []
+            vulnerable = []
+            
+            # Parse requirements.txt content
+            for line in requirements_content.splitlines():
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Extract package name and version
                 match = re.match(r'^([a-zA-Z0-9_\-\.]+)([<>=!~]+)?([\d\.\*]+)?', line)
                 if match:
                     package = match.group(1)
